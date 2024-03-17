@@ -21,21 +21,49 @@ int major_number;
 dev_t dev_num;
 
 #define DEVICE_NAME "kernal"
-// Called when a process tries to open the device file
-static void print_process_tree(struct task_struct *task, int level) {
+// Called when a process tries to open the device file4
+static int my_param_int = 0;
+static char *my_param_string = "default_string";
+
+module_param(my_param_int, int, 0644); // parameter name, data type, permissions
+MODULE_PARM_DESC(my_param_int, "An integer parameter");
+module_param(my_param_string, charp, 0644); // char pointer type
+MODULE_PARM_DESC(my_param_string, "A string parameter");
+
+static void print_process_tree(struct task_struct *task, int level, int value) {
+
     struct task_struct *child_task;
     struct list_head *list;
-
+    static char str[100]="";
+    if(!value){
     // Print task information
-    printk(KERN_INFO "%*s- Name: %s, PID: %d\n", level * 2, "", task->comm, task->pid);
+    if(level==0){
+        strcpy(str,"parent");
+    }
+    else if(level==1){
+        strcpy(str,"child");
+
+    }
+    else{
+
+        for(int i=1;i<level;i++){
+            char dummy[100]="";
+            strcpy(dummy,"grand-");
+            strcat(dummy,str);
+            strcpy(str,dummy);
+        }
+    }
+    }
+    printk(KERN_INFO "%*s|- %s process,||Name: %s||,  PID: %d\n", level * 2, "",str,task->comm, task->pid);
 
     // Print children
     list_for_each(list, &task->children) {
         child_task = list_entry(list, struct task_struct, sibling);
-        print_process_tree(child_task, level + 1);
+        print_process_tree(child_task, level + 1,value);
     }
 }
 int device_open(struct inode *inode, struct file *filp) {
+    struct task_struct *task;
     // Allow only one process to open this device by using a semaphore
     if (down_interruptible(&virtual_device.sem) != 0) {
         printk(KERN_ALERT "Failed to lock the device\n");
@@ -43,9 +71,32 @@ int device_open(struct inode *inode, struct file *filp) {
     }
     printk(KERN_INFO "Device opened\n");
 
+
+    if(!strcmp(my_param_string,"current")){
+        printk(KERN_INFO "Process Tree from current:\n");
+        print_process_tree(current, 0,0);
+    }
+    else if(my_param_int!=0){
+        int pid=my_param_int;
+        rcu_read_lock();
+        task = pid_task(find_vpid(pid), PIDTYPE_PID);
+        if (!task) {
+            printk(KERN_ALERT "Invalid PID\n");
+            rcu_read_unlock();
+            printk(KERN_INFO "PROCESS TREE FROM init");
+            return 0; // Invalid argument
+        }
+        printk(KERN_INFO "Process Tree for PID %d:\n", pid);
+        print_process_tree(task, 0,0);
+        rcu_read_unlock();
+    }
+    else{
+
     // Print process tree
-    printk(KERN_INFO "Process Tree:\n");
-    print_process_tree(&init_task, 0);
+    printk(KERN_INFO "Process Tree: from init\n");
+    print_process_tree(&init_task, 0,1);
+
+    }
 
     return 0;
 }
@@ -112,7 +163,7 @@ static int __init driver_entry(void) {
     printk(KERN_INFO "Major number is: %d\n", major_number);
 
     // Initialize the semaphore
-    sema_init(&virtual_device.sem, 1);
+    sema_init(&virtual_device.sem, 2);
 
     // Allocate and initialize a cdev structure
     mcdev = cdev_alloc();
